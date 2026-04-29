@@ -1,6 +1,6 @@
 # codex-pkmn demo edits
 
-TLDR: Talk to GPT-5.5 through Zelda and Pokemon Emerald.
+TLDR: This demo lets players interact with GPT-5.5 from inside classic games: Navi becomes an AI prompt interface in Ocarina of Time, and Pokemon Emerald becomes a personalized game build with custom AI-generated starters. The value is showing that decompiled games can become living, moddable frontends for modern AI while still running on the original game engines.
 
 This project explores what happens when classic games become programmable surfaces for AI-assisted tools and personalization. For the demo, we modified two community decompilation projects: one Ocarina of Time build with a Navi/Codex prompt flow, and one Pokemon Emerald build with custom starter Pokemon assets.
 
