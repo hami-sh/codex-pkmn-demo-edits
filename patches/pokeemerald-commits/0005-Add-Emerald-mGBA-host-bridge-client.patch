@@ -1,0 +1,179 @@
+From d8552cb354574cce34acc11f111a8c124ea7e806 Mon Sep 17 00:00:00 2001
+From: hamishgrahambultitude <hamishgrahambultitude@gmail.com>
+Date: Wed, 29 Apr 2026 11:25:36 +1000
+Subject: [PATCH 05/20] Add Emerald mGBA host bridge client
+
+---
+ .../mgba-emerald-host-bridge.lua              | 160 ++++++++++++++++++
+ 1 file changed, 160 insertions(+)
+ create mode 100644 tools/codex-npc-bridge/mgba-emerald-host-bridge.lua
+
+diff --git a/tools/codex-npc-bridge/mgba-emerald-host-bridge.lua b/tools/codex-npc-bridge/mgba-emerald-host-bridge.lua
+new file mode 100644
+index 000000000..4d0f044fb
+--- /dev/null
++++ b/tools/codex-npc-bridge/mgba-emerald-host-bridge.lua
+@@ -0,0 +1,160 @@
++-- mGBA host bridge for the Emerald Codex NPC mailbox.
++-- Start from the repo root with:
++--   CODEX_NPC_MODE=fake node tools/codex-npc-bridge/host-bridge-server.mjs
++-- Then load this script from mGBA's Tools > Scripting prompt with:
++--   dofile("/Users/hamish/Developer/codex-pkmn/pokeemerald/tools/codex-npc-bridge/mgba-emerald-host-bridge.lua")
++
++local MAILBOX_BASE = 0x02001974
++local MAILBOX_MAGIC = 0x58454443
++local STATUS_PENDING = 1
++local COMMAND_OFFSET = 9
++local COMMAND_MAX = 33
++
++local HOST = "127.0.0.1"
++local PORT = 8899
++
++local lastSeq = 0
++local client = nil
++local recvBuffer = ""
++
++local function readEmeraldString(address, maxLen)
++	local chars = {}
++
++	for i = 0, maxLen - 1 do
++		local b = emu:read8(address + i)
++		if b == 0xFF then
++			break
++		elseif b == 0x00 then
++			chars[#chars + 1] = " "
++		elseif b >= 0xA1 and b <= 0xAA then
++			chars[#chars + 1] = string.char(string.byte("0") + b - 0xA1)
++		elseif b >= 0xBB and b <= 0xD4 then
++			chars[#chars + 1] = string.char(string.byte("A") + b - 0xBB)
++		elseif b >= 0xD5 and b <= 0xEE then
++			chars[#chars + 1] = string.char(string.byte("a") + b - 0xD5)
++		elseif b == 0xAB then
++			chars[#chars + 1] = "!"
++		elseif b == 0xAC then
++			chars[#chars + 1] = "?"
++		elseif b == 0xAD then
++			chars[#chars + 1] = "."
++		elseif b == 0xAE then
++			chars[#chars + 1] = "-"
++		else
++			chars[#chars + 1] = string.format("<%02X>", b)
++		end
++	end
++
++	return table.concat(chars):match("^%s*(.-)%s*$")
++end
++
++local function jsonEscape(value)
++	return value:gsub("\\", "\\\\"):gsub('"', '\\"'):gsub("\n", "\\n"):gsub("\r", "\\r"):gsub("\t", "\\t")
++end
++
++local function jsonString(line, key)
++	local value = line:match('"' .. key .. '"%s*:%s*"(.-)"')
++	if not value then return nil end
++	return value:gsub('\\"', '"'):gsub("\\n", "\n"):gsub("\\r", "\r"):gsub("\\t", "\t"):gsub("\\\\", "\\")
++end
++
++local function jsonNumber(line, key)
++	local value = line:match('"' .. key .. '"%s*:%s*(%d+)')
++	return tonumber(value)
++end
++
++local function handleLine(line)
++	local seq = jsonNumber(line, "seq") or 0
++	local status = jsonString(line, "status") or "unknown"
++	local reply = jsonString(line, "reply")
++	local err = jsonString(line, "error")
++
++	if status == "ok" then
++		console:log(string.format("Codex host reply #%d: %s", seq, reply or ""))
++	else
++		console:error(string.format("Codex host error #%d: %s", seq, err or status))
++	end
++end
++
++local function onReceived()
++	while true do
++		local chunk, err = client:receive(1024)
++		if chunk then
++			recvBuffer = recvBuffer .. chunk
++			while true do
++				local newline = recvBuffer:find("\n", 1, true)
++				if not newline then break end
++				local line = recvBuffer:sub(1, newline - 1)
++				recvBuffer = recvBuffer:sub(newline + 1)
++				handleLine(line)
++			end
++		else
++			if err ~= socket.ERRORS.AGAIN then
++				console:error("Codex host bridge receive error: " .. err)
++				client:close()
++				client = nil
++			end
++			return
++		end
++	end
++end
++
++local function connect()
++	if client then return true end
++
++	client = socket.tcp()
++	client:add("received", onReceived)
++	client:add("error", function(err)
++		console:error("Codex host bridge socket error: " .. err)
++		client:close()
++		client = nil
++	end)
++
++	if client:connect(HOST, PORT) then
++		console:log(string.format("Connected to Codex NPC host bridge at %s:%d", HOST, PORT))
++		return true
++	end
++
++	console:error(string.format("Could not connect to Codex NPC host bridge at %s:%d", HOST, PORT))
++	client:close()
++	client = nil
++	return false
++end
++
++local function pollCodexMailbox()
++	local magic = emu:read32(MAILBOX_BASE)
++	if magic ~= MAILBOX_MAGIC then
++		return
++	end
++
++	local status = emu:read8(MAILBOX_BASE + 8)
++	if status ~= STATUS_PENDING then
++		return
++	end
++
++	local seq = emu:read16(MAILBOX_BASE + 4)
++	if seq == lastSeq then
++		return
++	end
++
++	local command = readEmeraldString(MAILBOX_BASE + COMMAND_OFFSET, COMMAND_MAX)
++	if not connect() then
++		return
++	end
++
++	lastSeq = seq
++	client:send(string.format('{"source":"emerald","seq":%d,"prompt":"%s"}\n', seq, jsonEscape(command)))
++	console:log(string.format("Sent Codex host request #%d: %s", seq, command))
++end
++
++callbacks:add("frame", pollCodexMailbox)
++callbacks:add("start", connect)
++callbacks:add("stop", function()
++	if client then
++		client:close()
++		client = nil
++	end
++end)
++
++connect()
++console:log("Emerald Codex host bridge script loaded")
+-- 
+2.50.1 (Apple Git-155)
+

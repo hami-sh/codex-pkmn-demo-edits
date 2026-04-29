@@ -1,0 +1,92 @@
+From b54dfdbba7f80c6a8ad24a86393175d9be0b0a6a Mon Sep 17 00:00:00 2001
+From: hamishgrahambultitude <hamishgrahambultitude@gmail.com>
+Date: Wed, 29 Apr 2026 11:16:53 +1000
+Subject: [PATCH 03/20] Add Codex mailbox publishing
+
+---
+ .../scripts.inc                               |  2 +-
+ data/specials.inc                             |  2 +-
+ src/codex_npc.c                               | 32 ++++++++++++++++++-
+ 3 files changed, 33 insertions(+), 3 deletions(-)
+
+diff --git a/data/maps/LittlerootTown_ProfessorBirchsLab/scripts.inc b/data/maps/LittlerootTown_ProfessorBirchsLab/scripts.inc
+index e04180a86..3f4c453c3 100644
+--- a/data/maps/LittlerootTown_ProfessorBirchsLab/scripts.inc
++++ b/data/maps/LittlerootTown_ProfessorBirchsLab/scripts.inc
+@@ -291,7 +291,7 @@ LittlerootTown_ProfessorBirchsLab_EventScript_CodexNpc::
+ 	faceplayer
+ 	msgbox LittlerootTown_ProfessorBirchsLab_Text_CodexPrompt, MSGBOX_DEFAULT
+ 	special StartCodexPrompt
+-	special BufferCodexPrompt
++	special PublishCodexPrompt
+ 	msgbox LittlerootTown_ProfessorBirchsLab_Text_CodexEcho, MSGBOX_DEFAULT
+ 	release
+ 	end
+diff --git a/data/specials.inc b/data/specials.inc
+index 06b9864eb..8484f6b48 100644
+--- a/data/specials.inc
++++ b/data/specials.inc
+@@ -529,7 +529,7 @@ gSpecials::
+ 	def_special DoWaldaNamingScreen, waitstate=1
+ 	def_special TryGetWallpaperWithWaldaPhrase
+ 	def_special StartCodexPrompt, waitstate=1
+-	def_special BufferCodexPrompt
++	def_special PublishCodexPrompt
+ 	def_special PlayerNotAtTrainerHillEntrance
+ 	def_special GetBattlePyramidHint
+ 	def_special LoadLinkContestPlayerPalettes
+diff --git a/src/codex_npc.c b/src/codex_npc.c
+index b4b219fee..570d7d6c6 100644
+--- a/src/codex_npc.c
++++ b/src/codex_npc.c
+@@ -4,7 +4,30 @@
+ #include "string_util.h"
+ #include "constants/characters.h"
+ 
++#define CODEX_MAILBOX_MAGIC 0x58454443 // "CDEX" in little-endian memory.
++#define CODEX_RESPONSE_LENGTH 256
++
++enum {
++    CODEX_MAILBOX_STATUS_IDLE,
++    CODEX_MAILBOX_STATUS_PENDING,
++    CODEX_MAILBOX_STATUS_RESPONSE_READY,
++    CODEX_MAILBOX_STATUS_ERROR,
++};
++
++struct CodexMailbox
++{
++    u32 magic;
++    u16 seq;
++    u16 ack;
++    u8 status;
++    u8 command[CODEX_INPUT_LENGTH + 1];
++    u8 response[CODEX_RESPONSE_LENGTH];
++};
++
+ static EWRAM_DATA u8 sCodexPromptBuffer[CODEX_INPUT_LENGTH + 1] = {0};
++static EWRAM_DATA u16 sCodexRequestSeq = 0;
++
++EWRAM_DATA struct CodexMailbox gCodexMailbox = {0};
+ 
+ void StartCodexPrompt(void)
+ {
+@@ -12,8 +35,15 @@ void StartCodexPrompt(void)
+     DoNamingScreen(NAMING_SCREEN_CODEX, sCodexPromptBuffer, 0, 0, 0, CB2_ReturnToFieldContinueScript);
+ }
+ 
+-void BufferCodexPrompt(void)
++void PublishCodexPrompt(void)
+ {
++    gCodexMailbox.magic = CODEX_MAILBOX_MAGIC;
++    gCodexMailbox.seq = ++sCodexRequestSeq;
++    gCodexMailbox.ack = 0;
++    gCodexMailbox.status = CODEX_MAILBOX_STATUS_PENDING;
++    StringCopyN(gCodexMailbox.command, sCodexPromptBuffer, CODEX_INPUT_LENGTH + 1);
++    gCodexMailbox.response[0] = EOS;
++
+     if (sCodexPromptBuffer[0] == EOS)
+         gStringVar1[0] = EOS;
+     else
+-- 
+2.50.1 (Apple Git-155)
+

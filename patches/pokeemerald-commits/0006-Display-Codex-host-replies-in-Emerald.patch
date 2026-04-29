@@ -1,0 +1,189 @@
+From 56d2b2a1cdc7d0e7a0ca4d620c8912c03be4a949 Mon Sep 17 00:00:00 2001
+From: hamishgrahambultitude <hamishgrahambultitude@gmail.com>
+Date: Wed, 29 Apr 2026 11:31:40 +1000
+Subject: [PATCH 06/20] Display Codex host replies in Emerald
+
+---
+ .../scripts.inc                               | 27 +++++++++
+ data/specials.inc                             |  2 +
+ src/codex_npc.c                               | 19 +++++++
+ .../mgba-emerald-host-bridge.lua              | 55 +++++++++++++++++++
+ 4 files changed, 103 insertions(+)
+
+diff --git a/data/maps/LittlerootTown_ProfessorBirchsLab/scripts.inc b/data/maps/LittlerootTown_ProfessorBirchsLab/scripts.inc
+index 3f4c453c3..4cce82b7d 100644
+--- a/data/maps/LittlerootTown_ProfessorBirchsLab/scripts.inc
++++ b/data/maps/LittlerootTown_ProfessorBirchsLab/scripts.inc
+@@ -293,6 +293,22 @@ LittlerootTown_ProfessorBirchsLab_EventScript_CodexNpc::
+ 	special StartCodexPrompt
+ 	special PublishCodexPrompt
+ 	msgbox LittlerootTown_ProfessorBirchsLab_Text_CodexEcho, MSGBOX_DEFAULT
++	msgbox LittlerootTown_ProfessorBirchsLab_Text_CodexWaiting, MSGBOX_DEFAULT
++	setvar VAR_TEMP_0, 0
++
++LittlerootTown_ProfessorBirchsLab_EventScript_CodexWaitForResponse::
++	delay 15
++	special IsCodexResponseReady
++	goto_if_eq VAR_RESULT, TRUE, LittlerootTown_ProfessorBirchsLab_EventScript_CodexShowResponse
++	addvar VAR_TEMP_0, 1
++	goto_if_lt VAR_TEMP_0, 40, LittlerootTown_ProfessorBirchsLab_EventScript_CodexWaitForResponse
++	msgbox LittlerootTown_ProfessorBirchsLab_Text_CodexTimeout, MSGBOX_DEFAULT
++	release
++	end
++
++LittlerootTown_ProfessorBirchsLab_EventScript_CodexShowResponse::
++	special BufferCodexResponse
++	msgbox LittlerootTown_ProfessorBirchsLab_Text_CodexResponse, MSGBOX_DEFAULT
+ 	release
+ 	end
+ 
+@@ -827,6 +843,17 @@ LittlerootTown_ProfessorBirchsLab_Text_CodexEcho:
+ 	.string "CODEX HEARD:\p"
+ 	.string "{STR_VAR_1}$"
+ 
++LittlerootTown_ProfessorBirchsLab_Text_CodexWaiting:
++	.string "WAITING FOR CODEX...$"
++
++LittlerootTown_ProfessorBirchsLab_Text_CodexResponse:
++	.string "CODEX SAYS:\p"
++	.string "{STR_VAR_1}$"
++
++LittlerootTown_ProfessorBirchsLab_Text_CodexTimeout:
++	.string "NO REPLY YET.\p"
++	.string "CHECK THE HOST BRIDGE.$"
++
+ LittlerootTown_ProfessorBirchsLab_Text_CrammedWithBooksOnPokemon:
+ 	.string "It's crammed with books on POKéMON.$"
+ 
+diff --git a/data/specials.inc b/data/specials.inc
+index 8484f6b48..ad7235b93 100644
+--- a/data/specials.inc
++++ b/data/specials.inc
+@@ -530,6 +530,8 @@ gSpecials::
+ 	def_special TryGetWallpaperWithWaldaPhrase
+ 	def_special StartCodexPrompt, waitstate=1
+ 	def_special PublishCodexPrompt
++	def_special IsCodexResponseReady
++	def_special BufferCodexResponse
+ 	def_special PlayerNotAtTrainerHillEntrance
+ 	def_special GetBattlePyramidHint
+ 	def_special LoadLinkContestPlayerPalettes
+diff --git a/src/codex_npc.c b/src/codex_npc.c
+index 570d7d6c6..f55de04a5 100644
+--- a/src/codex_npc.c
++++ b/src/codex_npc.c
+@@ -1,4 +1,5 @@
+ #include "global.h"
++#include "event_data.h"
+ #include "naming_screen.h"
+ #include "overworld.h"
+ #include "string_util.h"
+@@ -49,3 +50,21 @@ void PublishCodexPrompt(void)
+     else
+         StringCopy(gStringVar1, sCodexPromptBuffer);
+ }
++
++void IsCodexResponseReady(void)
++{
++    gSpecialVar_Result = (
++        gCodexMailbox.magic == CODEX_MAILBOX_MAGIC
++        && gCodexMailbox.status == CODEX_MAILBOX_STATUS_RESPONSE_READY
++        && gCodexMailbox.ack == gCodexMailbox.seq
++        && gCodexMailbox.response[0] != EOS
++    );
++}
++
++void BufferCodexResponse(void)
++{
++    if (gCodexMailbox.response[0] == EOS)
++        gStringVar1[0] = EOS;
++    else
++        StringCopy(gStringVar1, gCodexMailbox.response);
++}
+diff --git a/tools/codex-npc-bridge/mgba-emerald-host-bridge.lua b/tools/codex-npc-bridge/mgba-emerald-host-bridge.lua
+index 4d0f044fb..9d3e64bfc 100644
+--- a/tools/codex-npc-bridge/mgba-emerald-host-bridge.lua
++++ b/tools/codex-npc-bridge/mgba-emerald-host-bridge.lua
+@@ -7,8 +7,13 @@
+ local MAILBOX_BASE = 0x02001974
+ local MAILBOX_MAGIC = 0x58454443
+ local STATUS_PENDING = 1
++local STATUS_RESPONSE_READY = 2
+ local COMMAND_OFFSET = 9
+ local COMMAND_MAX = 33
++local ACK_OFFSET = 6
++local STATUS_OFFSET = 8
++local RESPONSE_OFFSET = 42
++local RESPONSE_MAX = 256
+ 
+ local HOST = "127.0.0.1"
+ local PORT = 8899
+@@ -63,6 +68,54 @@ local function jsonNumber(line, key)
+ 	return tonumber(value)
+ end
+ 
++local function write16(address, value)
++	emu:write8(address, value & 0xFF)
++	emu:write8(address + 1, (value >> 8) & 0xFF)
++end
++
++local function emeraldByte(char)
++	local byte = char:byte(1)
++	if byte == 0x20 then
++		return 0x00
++	elseif byte >= string.byte("0") and byte <= string.byte("9") then
++		return 0xA1 + byte - string.byte("0")
++	elseif byte >= string.byte("A") and byte <= string.byte("Z") then
++		return 0xBB + byte - string.byte("A")
++	elseif byte >= string.byte("a") and byte <= string.byte("z") then
++		return 0xD5 + byte - string.byte("a")
++	elseif char == "!" then
++		return 0xAB
++	elseif char == "?" then
++		return 0xAC
++	elseif char == "." then
++		return 0xAD
++	elseif char == "-" then
++		return 0xAE
++	elseif char == ":" then
++		return 0xF0
++	end
++
++	return 0x00
++end
++
++local function writeEmeraldString(address, maxLen, value)
++	value = value or ""
++	local len = math.min(#value, maxLen - 1)
++
++	for i = 1, len do
++		emu:write8(address + i - 1, emeraldByte(value:sub(i, i)))
++	end
++
++	emu:write8(address + len, 0xFF)
++	return len
++end
++
++local function publishReply(seq, reply)
++	writeEmeraldString(MAILBOX_BASE + RESPONSE_OFFSET, RESPONSE_MAX, reply)
++	write16(MAILBOX_BASE + ACK_OFFSET, seq)
++	emu:write8(MAILBOX_BASE + STATUS_OFFSET, STATUS_RESPONSE_READY)
++end
++
+ local function handleLine(line)
+ 	local seq = jsonNumber(line, "seq") or 0
+ 	local status = jsonString(line, "status") or "unknown"
+@@ -70,8 +123,10 @@ local function handleLine(line)
+ 	local err = jsonString(line, "error")
+ 
+ 	if status == "ok" then
++		publishReply(seq, reply or "")
+ 		console:log(string.format("Codex host reply #%d: %s", seq, reply or ""))
+ 	else
++		publishReply(seq, err or status)
+ 		console:error(string.format("Codex host error #%d: %s", seq, err or status))
+ 	end
+ end
+-- 
+2.50.1 (Apple Git-155)
+

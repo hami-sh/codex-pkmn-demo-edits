@@ -1,0 +1,55 @@
+From 0c664cf3fd3ecf71e6e233b091986ad86f7d5bfb Mon Sep 17 00:00:00 2001
+From: hamishgrahambultitude <hamishgrahambultitude@gmail.com>
+Date: Wed, 29 Apr 2026 12:58:36 +1000
+Subject: [PATCH 16/20] Default Emerald Codex bridge to GPT 5.4 low
+
+---
+ .../emerald-codex-app-server-client.mjs               | 11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/tools/codex-npc-bridge/emerald-codex-app-server-client.mjs b/tools/codex-npc-bridge/emerald-codex-app-server-client.mjs
+index 89d1ce932..69ccb10ee 100644
+--- a/tools/codex-npc-bridge/emerald-codex-app-server-client.mjs
++++ b/tools/codex-npc-bridge/emerald-codex-app-server-client.mjs
+@@ -3,6 +3,8 @@ import { spawn } from "node:child_process";
+ import readline from "node:readline";
+ 
+ const DEFAULT_TIMEOUT_MS = Number(process.env.EMERALD_CODEX_APP_SERVER_TIMEOUT_MS ?? 180000);
++const DEFAULT_MODEL = "gpt-5.4";
++const DEFAULT_REASONING_EFFORT = "low";
+ 
+ class EmeraldCodexAppServerClient {
+   constructor() {
+@@ -113,7 +115,7 @@ class EmeraldCodexAppServerClient {
+ 
+   async startThread() {
+     const params = {};
+-    const model = process.env.EMERALD_CODEX_MODEL ?? process.env.CODEX_MODEL;
++    const model = process.env.EMERALD_CODEX_MODEL ?? process.env.CODEX_MODEL ?? DEFAULT_MODEL;
+     if (model) {
+       params.model = model;
+     }
+@@ -132,13 +134,20 @@ class EmeraldCodexAppServerClient {
+       await this.startThread();
+     }
+ 
++    const model = process.env.EMERALD_CODEX_MODEL ?? process.env.CODEX_MODEL ?? DEFAULT_MODEL;
++    const effort = process.env.EMERALD_CODEX_REASONING_EFFORT
++      ?? process.env.CODEX_REASONING_EFFORT
++      ?? DEFAULT_REASONING_EFFORT;
+     this.reply = "";
+     const completed = new Promise((resolve, reject) => {
+       this.turnDone = { resolve, reject };
+     });
+ 
++    console.error(`[codex-app] starting turn model=${model} effort=${effort}`);
+     await this.send("turn/start", {
+       threadId: this.threadId,
++      model,
++      effort,
+       input: [{ type: "text", text: prompt }],
+     });
+ 
+-- 
+2.50.1 (Apple Git-155)
+

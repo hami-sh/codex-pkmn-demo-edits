@@ -31,7 +31,8 @@ This repository contains only our hackathon changes, not the full upstream game 
 ## What Is Included
 
 - `patches/oot/*.patch`: three local OOT commits for the Navi/Codex UI and IS64 prompt flow.
-- `patches/pokeemerald.patch`: binary-capable patch for the Pokemon Emerald Codex NPC, prompt flow, starter changes, and game-state tools.
+- `patches/pokeemerald-commits/*.patch`: local Pokemon Emerald commits for the Codex NPC, mGBA Lua bridge, host bridge, prompt flow, Pokemon granting, and end-game warp tools.
+- `patches/pokeemerald.patch`: binary-capable working-tree patch for the final Pokemon Emerald starter asset and metadata changes.
 - `pokeemerald/graphics/pokemon/custom_starters/`: original custom starter preview/source assets used by the patch.
 
 ## Apply the OOT Patch
@@ -39,7 +40,7 @@ This repository contains only our hackathon changes, not the full upstream game 
 ```sh
 git clone https://github.com/zeldaret/oot.git
 cd oot
-git am --3way /path/to/codex-pkmn-demo-edits/patches/oot/*.patch
+git am --3way /path/to/codex-retro-hackathon-2026/patches/oot/*.patch
 ```
 
 Then follow the upstream `zeldaret/oot` build instructions for your platform. After the normal setup/build, run the produced ROM in an emulator or on your normal OOT development target.
@@ -49,8 +50,9 @@ Then follow the upstream `zeldaret/oot` build instructions for your platform. Af
 ```sh
 git clone https://github.com/pret/pokeemerald.git
 cd pokeemerald
-git apply --binary /path/to/codex-pkmn-demo-edits/patches/pokeemerald.patch
-cp -R /path/to/codex-pkmn-demo-edits/pokeemerald/graphics/pokemon/custom_starters graphics/pokemon/
+git am --3way /path/to/codex-retro-hackathon-2026/patches/pokeemerald-commits/*.patch
+git apply --binary /path/to/codex-retro-hackathon-2026/patches/pokeemerald.patch
+cp -R /path/to/codex-retro-hackathon-2026/pokeemerald/graphics/pokemon/custom_starters graphics/pokemon/
 make -j
 ```
 

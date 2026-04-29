@@ -1,0 +1,41 @@
+From 04f37572200169942725cd2bf895c96932f82747 Mon Sep 17 00:00:00 2001
+From: hamishgrahambultitude <hamishgrahambultitude@gmail.com>
+Date: Wed, 29 Apr 2026 12:22:40 +1000
+Subject: [PATCH 10/20] Tolerate mGBA socket receive stalls
+
+---
+ tools/codex-npc-bridge/mgba-emerald-host-bridge.lua | 11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/tools/codex-npc-bridge/mgba-emerald-host-bridge.lua b/tools/codex-npc-bridge/mgba-emerald-host-bridge.lua
+index d2abe4931..ea1be6f54 100644
+--- a/tools/codex-npc-bridge/mgba-emerald-host-bridge.lua
++++ b/tools/codex-npc-bridge/mgba-emerald-host-bridge.lua
+@@ -39,6 +39,15 @@ local function errorText(err)
+ 	return tostring(err)
+ end
+ 
++local function isWouldBlock(err)
++	if err == socket.ERRORS.AGAIN then
++		return true
++	end
++
++	local text = errorText(err)
++	return text == "unknown error" or text == "<socket error>"
++end
++
+ local function readEmeraldString(address, maxLen)
+ 	local chars = {}
+ 
+@@ -256,7 +265,7 @@ local function onReceived()
+ 				handleLine(line)
+ 			end
+ 		else
+-			if err ~= socket.ERRORS.AGAIN then
++			if not isWouldBlock(err) then
+ 				console:error("Codex host bridge receive error: " .. errorText(err))
+ 				client:close()
+ 				client = nil
+-- 
+2.50.1 (Apple Git-155)
+

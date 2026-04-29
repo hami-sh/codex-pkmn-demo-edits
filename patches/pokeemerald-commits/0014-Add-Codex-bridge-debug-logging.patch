@@ -1,0 +1,245 @@
+From fbe2a7a55de36f09e11c6263a74d692c72a6309f Mon Sep 17 00:00:00 2001
+From: hamishgrahambultitude <hamishgrahambultitude@gmail.com>
+Date: Wed, 29 Apr 2026 12:53:24 +1000
+Subject: [PATCH 14/20] Add Codex bridge debug logging
+
+---
+ .../emerald-codex-app-server-client.mjs       | 27 +++++++++++++++++
+ .../emerald-host-bridge-server.mjs            | 29 +++++++++++++++++++
+ 2 files changed, 56 insertions(+)
+
+diff --git a/tools/codex-npc-bridge/emerald-codex-app-server-client.mjs b/tools/codex-npc-bridge/emerald-codex-app-server-client.mjs
+index 6e8db4bdf..89d1ce932 100644
+--- a/tools/codex-npc-bridge/emerald-codex-app-server-client.mjs
++++ b/tools/codex-npc-bridge/emerald-codex-app-server-client.mjs
+@@ -6,6 +6,7 @@ const DEFAULT_TIMEOUT_MS = Number(process.env.EMERALD_CODEX_APP_SERVER_TIMEOUT_M
+ 
+ class EmeraldCodexAppServerClient {
+   constructor() {
++    console.error("[codex-app] spawning: codex app-server");
+     this.proc = spawn("codex", ["app-server"], {
+       stdio: ["pipe", "pipe", "inherit"],
+     });
+@@ -17,7 +18,11 @@ class EmeraldCodexAppServerClient {
+ 
+     const rl = readline.createInterface({ input: this.proc.stdout });
+     rl.on("line", (line) => this.handleLine(line));
++    this.proc.on("spawn", () => {
++      console.error(`[codex-app] spawned pid=${this.proc.pid}`);
++    });
+     this.proc.on("exit", (code, signal) => {
++      console.error(`[codex-app] exited code=${code} signal=${signal}`);
+       const error = new Error(`codex app-server exited: code=${code} signal=${signal}`);
+       for (const { reject } of this.pending.values()) {
+         reject(error);
+@@ -35,9 +40,12 @@ class EmeraldCodexAppServerClient {
+ 
+     if (hasResponse) {
+       message.id = this.nextId++;
++      console.error(`[codex-app] -> ${method} id=${message.id}`);
+       promise = new Promise((resolve, reject) => {
+         this.pending.set(message.id, { resolve, reject });
+       });
++    } else {
++      console.error(`[codex-app] -> ${method}`);
+     }
+ 
+     this.proc.stdin.write(`${JSON.stringify(message)}\n`);
+@@ -55,12 +63,15 @@ class EmeraldCodexAppServerClient {
+     if (Object.hasOwn(message, "id")) {
+       const pending = this.pending.get(message.id);
+       if (!pending) {
++        console.error(`[codex-app] <- response id=${message.id} with no pending request`);
+         return;
+       }
+       this.pending.delete(message.id);
+       if (message.error) {
++        console.error(`[codex-app] <- ${message.id} error: ${message.error.message ?? JSON.stringify(message.error)}`);
+         pending.reject(new Error(message.error.message ?? JSON.stringify(message.error)));
+       } else {
++        console.error(`[codex-app] <- ${message.id} ok`);
+         pending.resolve(message.result);
+       }
+       return;
+@@ -70,17 +81,25 @@ class EmeraldCodexAppServerClient {
+       const delta = message.params?.delta ?? message.params?.text ?? "";
+       if (typeof delta === "string") {
+         this.reply += delta;
++        console.error(`[codex-app] delta chars=${delta.length} total=${this.reply.length}`);
+       }
+       return;
+     }
+ 
+     if (message.method === "turn/completed" && this.turnDone) {
++      console.error(`[codex-app] turn completed replyChars=${this.reply.length}`);
+       this.turnDone.resolve(message.params);
+       this.turnDone = null;
++      return;
++    }
++
++    if (message.method) {
++      console.error(`[codex-app] event ${message.method}`);
+     }
+   }
+ 
+   async initialize() {
++    console.error("[codex-app] initializing");
+     await this.send("initialize", {
+       clientInfo: {
+         name: "emerald_codex_npc_bridge",
+@@ -89,6 +108,7 @@ class EmeraldCodexAppServerClient {
+       },
+     });
+     await this.send("initialized", {}, false);
++    console.error("[codex-app] initialized");
+   }
+ 
+   async startThread() {
+@@ -97,14 +117,17 @@ class EmeraldCodexAppServerClient {
+     if (model) {
+       params.model = model;
+     }
++    console.error(`[codex-app] starting thread model=${model ?? "(default)"}`);
+     const result = await this.send("thread/start", params);
+     this.threadId = result?.thread?.id;
+     if (!this.threadId) {
+       throw new Error(`thread/start did not return a thread id: ${JSON.stringify(result)}`);
+     }
++    console.error(`[codex-app] thread ready id=${this.threadId}`);
+   }
+ 
+   async ask(prompt) {
++    console.error(`[codex-app] ask chars=${prompt.length}`);
+     if (!this.threadId) {
+       await this.startThread();
+     }
+@@ -119,7 +142,11 @@ class EmeraldCodexAppServerClient {
+       input: [{ type: "text", text: prompt }],
+     });
+ 
++    console.error(`[codex-app] waiting for turn/completed timeoutMs=${DEFAULT_TIMEOUT_MS}`);
+     await withTimeout(completed, DEFAULT_TIMEOUT_MS, "Timed out waiting for turn/completed");
++    if (!this.reply.trim()) {
++      console.error("[codex-app] warning: completed with empty reply");
++    }
+     return this.reply.trim();
+   }
+ 
+diff --git a/tools/codex-npc-bridge/emerald-host-bridge-server.mjs b/tools/codex-npc-bridge/emerald-host-bridge-server.mjs
+index 9aa53f184..d851cc26d 100644
+--- a/tools/codex-npc-bridge/emerald-host-bridge-server.mjs
++++ b/tools/codex-npc-bridge/emerald-host-bridge-server.mjs
+@@ -25,13 +25,19 @@ const demoShortcuts = new Map([
+ 
+ let codexClient;
+ 
++function log(message) {
++  console.error(`[emerald-bridge] ${message}`);
++}
++
+ function jsonLine(value) {
+   return `${JSON.stringify(value)}\n`;
+ }
+ 
+ async function getReply(prompt) {
++  log(`routing prompt mode=${mode} chars=${prompt.length}`);
+   const gift = parseGivePokemonCommand(prompt);
+   if (gift) {
++    log(`shortcut/tool matched species=${gift.displayName} id=${gift.species}`);
+     return {
+       reply: `TOOL READY: SHINY LV.100 ${gift.displayName}.`,
+       tool: {
+@@ -44,6 +50,7 @@ async function getReply(prompt) {
+   }
+ 
+   if (mode === "fake") {
++    log("using fake reply");
+     return {
+       reply: `HELLO FROM HOST: ${prompt}`,
+       tool: null,
+@@ -55,13 +62,18 @@ async function getReply(prompt) {
+   }
+ 
+   if (!codexClient) {
++    log("creating Codex app-server client");
+     codexClient = new EmeraldCodexAppServerClient();
+     await codexClient.initialize();
++  } else {
++    log("reusing Codex app-server client");
+   }
+ 
++  log("sending prompt to Codex app-server");
+   const reply = await codexClient.ask(
+     `Answer this as a concise Pokemon NPC. Use at most 2 short sentences: ${prompt}`,
+   );
++  log(`Codex app-server returned chars=${reply.length}`);
+   return {
+     reply,
+     tool: null,
+@@ -127,7 +139,10 @@ async function handleRequest(socket, request) {
+   const prompt = String(request.prompt ?? "").trim();
+   const source = String(request.source ?? "emerald");
+ 
++  log(`request received source=${source} seq=${seq} raw=${JSON.stringify(request)}`);
++
+   if (!prompt) {
++    log(`request rejected source=${source} seq=${seq} reason=empty-prompt`);
+     socket.write(jsonLine({ seq, status: "error", error: "empty prompt" }));
+     return;
+   }
+@@ -137,20 +152,24 @@ async function handleRequest(socket, request) {
+   try {
+     const result = await getReply(prompt);
+     const reply = truncateReply(result.reply);
++    log(`writing ok response source=${source} seq=${seq} replyChars=${reply.length} hasTool=${Boolean(result.tool)}`);
+     socket.write(jsonLine({ seq, status: "ok", reply, tool: result.tool ?? null }));
+     console.error(`[${source}] #${seq} reply: ${reply.slice(0, 120)}`);
+   } catch (error) {
+     const message = String(error?.message ?? error);
++    log(`writing error response source=${source} seq=${seq} error=${message}`);
+     socket.write(jsonLine({ seq, status: "error", error: message }));
+     console.error(`[${source}] #${seq} error: ${message}`);
+   }
+ }
+ 
+ const server = net.createServer((socket) => {
++  log(`client connected remote=${socket.remoteAddress}:${socket.remotePort}`);
+   socket.setEncoding("utf8");
+   let buffer = "";
+ 
+   socket.on("data", (chunk) => {
++    log(`socket data bytes=${Buffer.byteLength(chunk)} text=${JSON.stringify(chunk)}`);
+     buffer += chunk;
+ 
+     while (true) {
+@@ -170,6 +189,7 @@ const server = net.createServer((socket) => {
+       try {
+         request = JSON.parse(line);
+       } catch {
++        log(`invalid JSON line=${JSON.stringify(line)}`);
+         socket.write(jsonLine({ seq: 0, status: "error", error: "invalid JSON" }));
+         continue;
+       }
+@@ -177,10 +197,19 @@ const server = net.createServer((socket) => {
+       void handleRequest(socket, request);
+     }
+   });
++
++  socket.on("close", () => {
++    log("client disconnected");
++  });
++
++  socket.on("error", (error) => {
++    log(`socket error: ${error.message}`);
++  });
+ });
+ 
+ server.listen(port, host, () => {
+   console.error(`Emerald Codex NPC bridge listening on ${host}:${port} mode=${mode}`);
++  log(`pid=${process.pid} replyMaxChars=${maxReplyChars}`);
+ });
+ 
+ process.on("SIGINT", () => {
+-- 
+2.50.1 (Apple Git-155)
+

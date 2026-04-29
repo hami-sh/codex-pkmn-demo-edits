@@ -1,0 +1,85 @@
+From c68c70f337315a9dfa0b450da8566274ca039221 Mon Sep 17 00:00:00 2001
+From: hamishgrahambultitude <hamishgrahambultitude@gmail.com>
+Date: Wed, 29 Apr 2026 11:20:29 +1000
+Subject: [PATCH 04/20] Add mGBA Codex mailbox smoke test
+
+---
+ .../mgba-emerald-mailbox-smoke.lua            | 66 +++++++++++++++++++
+ 1 file changed, 66 insertions(+)
+ create mode 100644 tools/codex-npc-bridge/mgba-emerald-mailbox-smoke.lua
+
+diff --git a/tools/codex-npc-bridge/mgba-emerald-mailbox-smoke.lua b/tools/codex-npc-bridge/mgba-emerald-mailbox-smoke.lua
+new file mode 100644
+index 000000000..ea7f71651
+--- /dev/null
++++ b/tools/codex-npc-bridge/mgba-emerald-mailbox-smoke.lua
+@@ -0,0 +1,66 @@
++-- mGBA smoke test for the Emerald Codex NPC mailbox.
++-- Load this from mGBA's Tools > Scripting window, then talk to the Codex NPC.
++
++local MAILBOX_BASE = 0x02001974
++local MAILBOX_MAGIC = 0x58454443
++local STATUS_PENDING = 1
++local COMMAND_OFFSET = 9
++local COMMAND_MAX = 33
++
++local lastSeq = 0
++
++local function readEmeraldString(address, maxLen)
++	local chars = {}
++
++	for i = 0, maxLen - 1 do
++		local b = emu:read8(address + i)
++		if b == 0xFF then
++			break
++		elseif b == 0x00 then
++			chars[#chars + 1] = " "
++		elseif b >= 0xA1 and b <= 0xAA then
++			chars[#chars + 1] = string.char(string.byte("0") + b - 0xA1)
++		elseif b >= 0xBB and b <= 0xD4 then
++			chars[#chars + 1] = string.char(string.byte("A") + b - 0xBB)
++		elseif b >= 0xD5 and b <= 0xEE then
++			chars[#chars + 1] = string.char(string.byte("a") + b - 0xD5)
++		elseif b == 0xAB then
++			chars[#chars + 1] = "!"
++		elseif b == 0xAC then
++			chars[#chars + 1] = "?"
++		elseif b == 0xAD then
++			chars[#chars + 1] = "."
++		elseif b == 0xAE then
++			chars[#chars + 1] = "-"
++		else
++			chars[#chars + 1] = string.format("<%02X>", b)
++		end
++	end
++
++	return table.concat(chars):match("^%s*(.-)%s*$")
++end
++
++local function pollCodexMailbox()
++	local magic = emu:read32(MAILBOX_BASE)
++	if magic ~= MAILBOX_MAGIC then
++		return
++	end
++
++	local status = emu:read8(MAILBOX_BASE + 8)
++	if status ~= STATUS_PENDING then
++		return
++	end
++
++	local seq = emu:read16(MAILBOX_BASE + 4)
++	if seq == lastSeq then
++		return
++	end
++
++	lastSeq = seq
++
++	local command = readEmeraldString(MAILBOX_BASE + COMMAND_OFFSET, COMMAND_MAX)
++	console:log(string.format("Codex mailbox request #%d: %s", seq, command))
++end
++
++callbacks:add("frame", pollCodexMailbox)
++console:log(string.format("Codex mailbox smoke test loaded at 0x%08X", MAILBOX_BASE))
+-- 
+2.50.1 (Apple Git-155)
+

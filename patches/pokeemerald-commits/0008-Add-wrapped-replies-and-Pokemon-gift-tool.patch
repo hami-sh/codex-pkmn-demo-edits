@@ -1,0 +1,500 @@
+From 464ff9eb85ba9bde94c5058e43005fba684274d1 Mon Sep 17 00:00:00 2001
+From: hamishgrahambultitude <hamishgrahambultitude@gmail.com>
+Date: Wed, 29 Apr 2026 12:00:25 +1000
+Subject: [PATCH 08/20] Add wrapped replies and Pokemon gift tool
+
+---
+ .../scripts.inc                               |  40 +++++-
+ data/specials.inc                             |   1 +
+ src/codex_npc.c                               |  71 ++++++++++
+ .../emerald-host-bridge-server.mjs            |  85 +++++++++++-
+ .../mgba-emerald-host-bridge.lua              | 126 ++++++++++++++++--
+ 5 files changed, 303 insertions(+), 20 deletions(-)
+
+diff --git a/data/maps/LittlerootTown_ProfessorBirchsLab/scripts.inc b/data/maps/LittlerootTown_ProfessorBirchsLab/scripts.inc
+index 4cce82b7d..17bc2e113 100644
+--- a/data/maps/LittlerootTown_ProfessorBirchsLab/scripts.inc
++++ b/data/maps/LittlerootTown_ProfessorBirchsLab/scripts.inc
+@@ -292,7 +292,6 @@ LittlerootTown_ProfessorBirchsLab_EventScript_CodexNpc::
+ 	msgbox LittlerootTown_ProfessorBirchsLab_Text_CodexPrompt, MSGBOX_DEFAULT
+ 	special StartCodexPrompt
+ 	special PublishCodexPrompt
+-	msgbox LittlerootTown_ProfessorBirchsLab_Text_CodexEcho, MSGBOX_DEFAULT
+ 	msgbox LittlerootTown_ProfessorBirchsLab_Text_CodexWaiting, MSGBOX_DEFAULT
+ 	setvar VAR_TEMP_0, 0
+ 
+@@ -309,6 +308,29 @@ LittlerootTown_ProfessorBirchsLab_EventScript_CodexWaitForResponse::
+ LittlerootTown_ProfessorBirchsLab_EventScript_CodexShowResponse::
+ 	special BufferCodexResponse
+ 	msgbox LittlerootTown_ProfessorBirchsLab_Text_CodexResponse, MSGBOX_DEFAULT
++	special TryExecuteCodexTool
++	goto_if_eq VAR_RESULT, 1, LittlerootTown_ProfessorBirchsLab_EventScript_CodexToolParty
++	goto_if_eq VAR_RESULT, 2, LittlerootTown_ProfessorBirchsLab_EventScript_CodexToolPc
++	goto_if_eq VAR_RESULT, 3, LittlerootTown_ProfessorBirchsLab_EventScript_CodexToolNoRoom
++	release
++	end
++
++LittlerootTown_ProfessorBirchsLab_EventScript_CodexToolParty::
++	playfanfare MUS_OBTAIN_ITEM
++	msgbox LittlerootTown_ProfessorBirchsLab_Text_CodexToolParty, MSGBOX_DEFAULT
++	waitfanfare
++	release
++	end
++
++LittlerootTown_ProfessorBirchsLab_EventScript_CodexToolPc::
++	playfanfare MUS_OBTAIN_ITEM
++	msgbox LittlerootTown_ProfessorBirchsLab_Text_CodexToolPc, MSGBOX_DEFAULT
++	waitfanfare
++	release
++	end
++
++LittlerootTown_ProfessorBirchsLab_EventScript_CodexToolNoRoom::
++	msgbox LittlerootTown_ProfessorBirchsLab_Text_CodexToolNoRoom, MSGBOX_DEFAULT
+ 	release
+ 	end
+ 
+@@ -839,10 +861,6 @@ LittlerootTown_ProfessorBirchsLab_Text_CodexPrompt:
+ 	.string "CODEX LINK READY.\p"
+ 	.string "ENTER A MESSAGE FOR CODEX.$"
+ 
+-LittlerootTown_ProfessorBirchsLab_Text_CodexEcho:
+-	.string "CODEX HEARD:\p"
+-	.string "{STR_VAR_1}$"
+-
+ LittlerootTown_ProfessorBirchsLab_Text_CodexWaiting:
+ 	.string "WAITING FOR CODEX...$"
+ 
+@@ -854,6 +872,18 @@ LittlerootTown_ProfessorBirchsLab_Text_CodexTimeout:
+ 	.string "NO REPLY YET.\p"
+ 	.string "CHECK THE HOST BRIDGE.$"
+ 
++LittlerootTown_ProfessorBirchsLab_Text_CodexToolParty:
++	.string "CODEX SENT OVER\p"
++	.string "SHINY LV.100 {STR_VAR_2}!$"
++
++LittlerootTown_ProfessorBirchsLab_Text_CodexToolPc:
++	.string "SHINY LV.100 {STR_VAR_2}\p"
++	.string "WAS SENT TO THE PC.$"
++
++LittlerootTown_ProfessorBirchsLab_Text_CodexToolNoRoom:
++	.string "CODEX FOUND NO ROOM\p"
++	.string "FOR THAT POKéMON.$"
++
+ LittlerootTown_ProfessorBirchsLab_Text_CrammedWithBooksOnPokemon:
+ 	.string "It's crammed with books on POKéMON.$"
+ 
+diff --git a/data/specials.inc b/data/specials.inc
+index ad7235b93..c5ed287fe 100644
+--- a/data/specials.inc
++++ b/data/specials.inc
+@@ -532,6 +532,7 @@ gSpecials::
+ 	def_special PublishCodexPrompt
+ 	def_special IsCodexResponseReady
+ 	def_special BufferCodexResponse
++	def_special TryExecuteCodexTool
+ 	def_special PlayerNotAtTrainerHillEntrance
+ 	def_special GetBattlePyramidHint
+ 	def_special LoadLinkContestPlayerPalettes
+diff --git a/src/codex_npc.c b/src/codex_npc.c
+index f55de04a5..86148a0b4 100644
+--- a/src/codex_npc.c
++++ b/src/codex_npc.c
+@@ -1,9 +1,13 @@
+ #include "global.h"
++#include "data.h"
+ #include "event_data.h"
+ #include "naming_screen.h"
+ #include "overworld.h"
++#include "pokemon.h"
+ #include "string_util.h"
+ #include "constants/characters.h"
++#include "constants/pokemon.h"
++#include "constants/species.h"
+ 
+ #define CODEX_MAILBOX_MAGIC 0x58454443 // "CDEX" in little-endian memory.
+ #define CODEX_RESPONSE_LENGTH 256
+@@ -15,6 +19,20 @@ enum {
+     CODEX_MAILBOX_STATUS_ERROR,
+ };
+ 
++enum {
++    CODEX_TOOL_ACTION_NONE,
++    CODEX_TOOL_ACTION_GIVE_POKEMON,
++};
++
++#define CODEX_TOOL_FLAG_SHINY (1 << 0)
++
++enum {
++    CODEX_TOOL_RESULT_NONE,
++    CODEX_TOOL_RESULT_GIVEN_TO_PARTY,
++    CODEX_TOOL_RESULT_GIVEN_TO_PC,
++    CODEX_TOOL_RESULT_NO_ROOM,
++};
++
+ struct CodexMailbox
+ {
+     u32 magic;
+@@ -23,6 +41,11 @@ struct CodexMailbox
+     u8 status;
+     u8 command[CODEX_INPUT_LENGTH + 1];
+     u8 response[CODEX_RESPONSE_LENGTH];
++    u8 toolAction;
++    u8 toolSpeciesLo;
++    u8 toolSpeciesHi;
++    u8 toolLevel;
++    u8 toolFlags;
+ };
+ 
+ static EWRAM_DATA u8 sCodexPromptBuffer[CODEX_INPUT_LENGTH + 1] = {0};
+@@ -44,6 +67,11 @@ void PublishCodexPrompt(void)
+     gCodexMailbox.status = CODEX_MAILBOX_STATUS_PENDING;
+     StringCopyN(gCodexMailbox.command, sCodexPromptBuffer, CODEX_INPUT_LENGTH + 1);
+     gCodexMailbox.response[0] = EOS;
++    gCodexMailbox.toolAction = CODEX_TOOL_ACTION_NONE;
++    gCodexMailbox.toolSpeciesLo = 0;
++    gCodexMailbox.toolSpeciesHi = 0;
++    gCodexMailbox.toolLevel = 0;
++    gCodexMailbox.toolFlags = 0;
+ 
+     if (sCodexPromptBuffer[0] == EOS)
+         gStringVar1[0] = EOS;
+@@ -68,3 +96,46 @@ void BufferCodexResponse(void)
+     else
+         StringCopy(gStringVar1, gCodexMailbox.response);
+ }
++
++void TryExecuteCodexTool(void)
++{
++    struct Pokemon mon;
++    u32 personality = 0;
++    u32 otId = 0;
++    u16 species = gCodexMailbox.toolSpeciesLo | (gCodexMailbox.toolSpeciesHi << 8);
++    u8 result;
++
++    if (gCodexMailbox.toolAction != CODEX_TOOL_ACTION_GIVE_POKEMON)
++    {
++        gSpecialVar_Result = CODEX_TOOL_RESULT_NONE;
++        return;
++    }
++
++    if (species == SPECIES_NONE || species >= NUM_SPECIES)
++    {
++        gSpecialVar_Result = CODEX_TOOL_RESULT_NONE;
++        return;
++    }
++
++    if (!(gCodexMailbox.toolFlags & CODEX_TOOL_FLAG_SHINY))
++    {
++        personality = 1;
++    }
++
++    if (gCodexMailbox.toolLevel < MIN_LEVEL)
++        gCodexMailbox.toolLevel = MIN_LEVEL;
++    if (gCodexMailbox.toolLevel > MAX_LEVEL)
++        gCodexMailbox.toolLevel = MAX_LEVEL;
++
++    CreateMon(&mon, species, gCodexMailbox.toolLevel, MAX_PER_STAT_IVS, TRUE, personality, OT_ID_PRESET, otId);
++    result = GiveMonToPlayer(&mon);
++    StringCopy(gStringVar2, gSpeciesNames[species]);
++    gCodexMailbox.toolAction = CODEX_TOOL_ACTION_NONE;
++
++    if (result == MON_GIVEN_TO_PARTY)
++        gSpecialVar_Result = CODEX_TOOL_RESULT_GIVEN_TO_PARTY;
++    else if (result == MON_GIVEN_TO_PC)
++        gSpecialVar_Result = CODEX_TOOL_RESULT_GIVEN_TO_PC;
++    else
++        gSpecialVar_Result = CODEX_TOOL_RESULT_NO_ROOM;
++}
+diff --git a/tools/codex-npc-bridge/emerald-host-bridge-server.mjs b/tools/codex-npc-bridge/emerald-host-bridge-server.mjs
+index 849aabc54..3ac70e92c 100644
+--- a/tools/codex-npc-bridge/emerald-host-bridge-server.mjs
++++ b/tools/codex-npc-bridge/emerald-host-bridge-server.mjs
+@@ -1,10 +1,16 @@
+ #!/usr/bin/env node
++import { readFileSync } from "node:fs";
+ import net from "node:net";
++import { dirname, resolve } from "node:path";
++import { fileURLToPath } from "node:url";
+ import { EmeraldCodexAppServerClient } from "./emerald-codex-app-server-client.mjs";
+ 
++const scriptDir = dirname(fileURLToPath(import.meta.url));
+ const host = process.env.EMERALD_CODEX_NPC_HOST ?? "127.0.0.1";
+ const port = Number(process.env.EMERALD_CODEX_NPC_PORT ?? 8898);
+ const mode = process.env.EMERALD_CODEX_NPC_MODE ?? "fake";
++const maxReplyChars = Number(process.env.EMERALD_CODEX_REPLY_MAX_CHARS ?? 220);
++const speciesByName = loadSpeciesMap();
+ 
+ let codexClient;
+ 
+@@ -13,8 +19,24 @@ function jsonLine(value) {
+ }
+ 
+ async function getReply(prompt) {
++  const gift = parseGivePokemonCommand(prompt);
++  if (gift) {
++    return {
++      reply: `TOOL READY: SHINY LV.100 ${gift.displayName}.`,
++      tool: {
++        type: "give_pokemon",
++        species: gift.species,
++        level: 100,
++        shiny: true,
++      },
++    };
++  }
++
+   if (mode === "fake") {
+-    return `HELLO FROM HOST: ${prompt}`;
++    return {
++      reply: `HELLO FROM HOST: ${prompt}`,
++      tool: null,
++    };
+   }
+ 
+   if (mode !== "codex") {
+@@ -26,7 +48,61 @@ async function getReply(prompt) {
+     await codexClient.initialize();
+   }
+ 
+-  return codexClient.ask(prompt);
++  const reply = await codexClient.ask(
++    `Answer this as a concise Pokemon NPC. Use at most 2 short sentences: ${prompt}`,
++  );
++  return {
++    reply,
++    tool: null,
++  };
++}
++
++function loadSpeciesMap() {
++  const speciesPath = resolve(scriptDir, "../../include/constants/species.h");
++  const text = readFileSync(speciesPath, "utf8");
++  const map = new Map();
++
++  for (const match of text.matchAll(/^#define\s+SPECIES_([A-Z0-9_]+)\s+(\d+)/gm)) {
++    const rawName = match[1];
++    const species = Number(match[2]);
++    if (rawName === "NONE" || rawName === "EGG") {
++      continue;
++    }
++    const displayName = rawName.replace(/_/g, " ");
++    map.set(normalizePokemonName(rawName), { species, displayName });
++    map.set(normalizePokemonName(displayName), { species, displayName });
++  }
++
++  map.set("PIKA", map.get("PIKACHU"));
++  map.set("NIDORANF", map.get("NIDORAN F"));
++  map.set("NIDORANM", map.get("NIDORAN M"));
++  map.set("FARFETCHD", map.get("FARFETCHD"));
++  map.set("MRMIME", map.get("MR MIME"));
++  map.set("HOHO", map.get("HO OH"));
++
++  return map;
++}
++
++function normalizePokemonName(value) {
++  return String(value).toUpperCase().replace(/[^A-Z0-9]/g, "");
++}
++
++function parseGivePokemonCommand(prompt) {
++  const match = prompt.trim().match(/^GIVE(?:\s+ME)?\s+(.+)$/i);
++  if (!match) {
++    return null;
++  }
++
++  const name = normalizePokemonName(match[1]);
++  return speciesByName.get(name) ?? null;
++}
++
++function truncateReply(reply) {
++  if (reply.length <= maxReplyChars) {
++    return reply;
++  }
++
++  return `${reply.slice(0, Math.max(0, maxReplyChars - 3)).trimEnd()}...`;
+ }
+ 
+ async function handleRequest(socket, request) {
+@@ -42,8 +118,9 @@ async function handleRequest(socket, request) {
+   console.error(`[${source}] #${seq}: ${prompt}`);
+ 
+   try {
+-    const reply = await getReply(prompt);
+-    socket.write(jsonLine({ seq, status: "ok", reply }));
++    const result = await getReply(prompt);
++    const reply = truncateReply(result.reply);
++    socket.write(jsonLine({ seq, status: "ok", reply, tool: result.tool ?? null }));
+     console.error(`[${source}] #${seq} reply: ${reply.slice(0, 120)}`);
+   } catch (error) {
+     const message = String(error?.message ?? error);
+diff --git a/tools/codex-npc-bridge/mgba-emerald-host-bridge.lua b/tools/codex-npc-bridge/mgba-emerald-host-bridge.lua
+index 8aa3cae3a..3a09582db 100644
+--- a/tools/codex-npc-bridge/mgba-emerald-host-bridge.lua
++++ b/tools/codex-npc-bridge/mgba-emerald-host-bridge.lua
+@@ -14,6 +14,15 @@ local ACK_OFFSET = 6
+ local STATUS_OFFSET = 8
+ local RESPONSE_OFFSET = 42
+ local RESPONSE_MAX = 256
++local TOOL_ACTION_OFFSET = RESPONSE_OFFSET + RESPONSE_MAX
++local TOOL_SPECIES_OFFSET = TOOL_ACTION_OFFSET + 1
++local TOOL_LEVEL_OFFSET = TOOL_SPECIES_OFFSET + 2
++local TOOL_FLAGS_OFFSET = TOOL_LEVEL_OFFSET + 1
++local TOOL_ACTION_NONE = 0
++local TOOL_ACTION_GIVE_POKEMON = 1
++local TOOL_FLAG_SHINY = 1
++local RESPONSE_LINE_MAX = 26
++local RESPONSE_LINES_PER_PAGE = 2
+ 
+ local HOST = "127.0.0.1"
+ local PORT = 8898
+@@ -68,6 +77,10 @@ local function jsonNumber(line, key)
+ 	return tonumber(value)
+ end
+ 
++local function jsonObject(line, key)
++	return line:match('"' .. key .. '"%s*:%s*(%b{})')
++end
++
+ local function write16(address, value)
+ 	emu:write8(address, value & 0xFF)
+ 	emu:write8(address + 1, (value >> 8) & 0xFF)
+@@ -98,20 +111,110 @@ local function emeraldByte(char)
+ 	return 0x00
+ end
+ 
+-local function writeEmeraldString(address, maxLen, value)
+-	value = value or ""
+-	local len = math.min(#value, maxLen - 1)
++local function writeByte(bytes, value, maxLen)
++	if #bytes >= maxLen - 1 then
++		return false
++	end
++
++	bytes[#bytes + 1] = value
++	return true
++end
++
++local function writeEncodedWord(bytes, word, maxLen)
++	for i = 1, #word do
++		if not writeByte(bytes, emeraldByte(word:sub(i, i)), maxLen) then
++			return false
++		end
++	end
++
++	return true
++end
++
++local function encodeTextboxResponse(value, maxLen)
++	value = (value or ""):gsub("%s+", " "):match("^%s*(.-)%s*$")
++
++	local bytes = {}
++	local lineLen = 0
++	local lineCount = 1
++
++	for word in value:gmatch("%S+") do
++		local remaining = word
++		while #remaining > RESPONSE_LINE_MAX do
++			local part = remaining:sub(1, RESPONSE_LINE_MAX)
++			remaining = remaining:sub(RESPONSE_LINE_MAX + 1)
++			if lineLen > 0 then
++				if not writeByte(bytes, 0xFE, maxLen) then break end
++				lineLen = 0
++				lineCount = lineCount + 1
++			end
++			if not writeEncodedWord(bytes, part, maxLen) then break end
++			lineLen = RESPONSE_LINE_MAX
++		end
++
++		local needsSpace = lineLen > 0
++		local nextLen = lineLen + (needsSpace and 1 or 0) + #remaining
++
++		if nextLen > RESPONSE_LINE_MAX then
++			if lineCount >= RESPONSE_LINES_PER_PAGE then
++				if not writeByte(bytes, 0xFB, maxLen) then break end
++				lineCount = 1
++			else
++				if not writeByte(bytes, 0xFE, maxLen) then break end
++				lineCount = lineCount + 1
++			end
++			lineLen = 0
++			needsSpace = false
++		end
++
++		if needsSpace then
++			if not writeByte(bytes, 0x00, maxLen) then break end
++			lineLen = lineLen + 1
++		end
++
++		if not writeEncodedWord(bytes, remaining, maxLen) then break end
++		lineLen = lineLen + #remaining
++	end
++
++	bytes[#bytes + 1] = 0xFF
++	return bytes
++end
++
++local function writeEmeraldResponse(address, maxLen, value)
++	local bytes = encodeTextboxResponse(value, maxLen)
++	for i, byte in ipairs(bytes) do
++		emu:write8(address + i - 1, byte)
++	end
++	return #bytes
++end
++
++local function writeTool(toolJson)
++	emu:write8(MAILBOX_BASE + TOOL_ACTION_OFFSET, TOOL_ACTION_NONE)
++	write16(MAILBOX_BASE + TOOL_SPECIES_OFFSET, 0)
++	emu:write8(MAILBOX_BASE + TOOL_LEVEL_OFFSET, 0)
++	emu:write8(MAILBOX_BASE + TOOL_FLAGS_OFFSET, 0)
++
++	if not toolJson then
++		return
++	end
+ 
+-	for i = 1, len do
+-		emu:write8(address + i - 1, emeraldByte(value:sub(i, i)))
++	local toolType = jsonString(toolJson, "type")
++	if toolType ~= "give_pokemon" then
++		return
+ 	end
+ 
+-	emu:write8(address + len, 0xFF)
+-	return len
++	local species = jsonNumber(toolJson, "species") or 0
++	local level = jsonNumber(toolJson, "level") or 100
++	local shiny = toolJson:match('"shiny"%s*:%s*true') ~= nil
++
++	write16(MAILBOX_BASE + TOOL_SPECIES_OFFSET, species)
++	emu:write8(MAILBOX_BASE + TOOL_LEVEL_OFFSET, math.max(1, math.min(100, level)))
++	emu:write8(MAILBOX_BASE + TOOL_FLAGS_OFFSET, shiny and TOOL_FLAG_SHINY or 0)
++	emu:write8(MAILBOX_BASE + TOOL_ACTION_OFFSET, TOOL_ACTION_GIVE_POKEMON)
+ end
+ 
+-local function publishReply(seq, reply)
+-	writeEmeraldString(MAILBOX_BASE + RESPONSE_OFFSET, RESPONSE_MAX, reply)
++local function publishReply(seq, reply, toolJson)
++	writeEmeraldResponse(MAILBOX_BASE + RESPONSE_OFFSET, RESPONSE_MAX, reply)
++	writeTool(toolJson)
+ 	write16(MAILBOX_BASE + ACK_OFFSET, seq)
+ 	emu:write8(MAILBOX_BASE + STATUS_OFFSET, STATUS_RESPONSE_READY)
+ end
+@@ -120,13 +223,14 @@ local function handleLine(line)
+ 	local seq = jsonNumber(line, "seq") or 0
+ 	local status = jsonString(line, "status") or "unknown"
+ 	local reply = jsonString(line, "reply")
++	local toolJson = jsonObject(line, "tool")
+ 	local err = jsonString(line, "error")
+ 
+ 	if status == "ok" then
+-		publishReply(seq, reply or "")
++		publishReply(seq, reply or "", toolJson)
+ 		console:log(string.format("Codex host reply #%d: %s", seq, reply or ""))
+ 	else
+-		publishReply(seq, err or status)
++		publishReply(seq, err or status, nil)
+ 		console:error(string.format("Codex host error #%d: %s", seq, err or status))
+ 	end
+ end
+-- 
+2.50.1 (Apple Git-155)
+

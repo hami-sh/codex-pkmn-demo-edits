@@ -1,0 +1,149 @@
+From 8932116ad29800fc4bd51817c2d8f53b850d9c2a Mon Sep 17 00:00:00 2001
+From: hamishgrahambultitude <hamishgrahambultitude@gmail.com>
+Date: Wed, 29 Apr 2026 13:35:01 +1000
+Subject: [PATCH 20/20] Add Emerald Codex endgame warp shortcut
+
+---
+ .../scripts.inc                                 | 13 +++++++++++++
+ src/codex_npc.c                                 | 12 +++++++++++-
+ .../emerald-host-bridge-server.mjs              | 17 +++++++++++++++++
+ .../mgba-emerald-host-bridge.lua                |  6 ++++++
+ 4 files changed, 47 insertions(+), 1 deletion(-)
+
+diff --git a/data/maps/LittlerootTown_ProfessorBirchsLab/scripts.inc b/data/maps/LittlerootTown_ProfessorBirchsLab/scripts.inc
+index 17bc2e113..c1b2d5862 100644
+--- a/data/maps/LittlerootTown_ProfessorBirchsLab/scripts.inc
++++ b/data/maps/LittlerootTown_ProfessorBirchsLab/scripts.inc
+@@ -312,6 +312,7 @@ LittlerootTown_ProfessorBirchsLab_EventScript_CodexShowResponse::
+ 	goto_if_eq VAR_RESULT, 1, LittlerootTown_ProfessorBirchsLab_EventScript_CodexToolParty
+ 	goto_if_eq VAR_RESULT, 2, LittlerootTown_ProfessorBirchsLab_EventScript_CodexToolPc
+ 	goto_if_eq VAR_RESULT, 3, LittlerootTown_ProfessorBirchsLab_EventScript_CodexToolNoRoom
++	goto_if_eq VAR_RESULT, 4, LittlerootTown_ProfessorBirchsLab_EventScript_CodexToolWarpEnd
+ 	release
+ 	end
+ 
+@@ -334,6 +335,14 @@ LittlerootTown_ProfessorBirchsLab_EventScript_CodexToolNoRoom::
+ 	release
+ 	end
+ 
++LittlerootTown_ProfessorBirchsLab_EventScript_CodexToolWarpEnd::
++	msgbox LittlerootTown_ProfessorBirchsLab_Text_CodexToolWarpEnd, MSGBOX_DEFAULT
++	closemessage
++	warp MAP_EVER_GRANDE_CITY_HALL_OF_FAME, 7, 16
++	waitstate
++	release
++	end
++
+ LittlerootTown_ProfessorBirchsLab_EventScript_Cyndaquil::
+ 	release
+ 	goto_if_ge VAR_DEX_UPGRADE_JOHTO_STARTER_STATE, 6, LittlerootTown_ProfessorBirchsLab_EventScript_AlreadyChoseJohtoStarter
+@@ -884,6 +893,10 @@ LittlerootTown_ProfessorBirchsLab_Text_CodexToolNoRoom:
+ 	.string "CODEX FOUND NO ROOM\p"
+ 	.string "FOR THAT POKéMON.$"
+ 
++LittlerootTown_ProfessorBirchsLab_Text_CodexToolWarpEnd:
++	.string "CODEX OPENED\p"
++	.string "THE FINAL DOOR.$"
++
+ LittlerootTown_ProfessorBirchsLab_Text_CrammedWithBooksOnPokemon:
+ 	.string "It's crammed with books on POKéMON.$"
+ 
+diff --git a/src/codex_npc.c b/src/codex_npc.c
+index 5a2519a01..ef751d89c 100644
+--- a/src/codex_npc.c
++++ b/src/codex_npc.c
+@@ -25,6 +25,7 @@ enum {
+ enum {
+     CODEX_TOOL_ACTION_NONE,
+     CODEX_TOOL_ACTION_GIVE_POKEMON,
++    CODEX_TOOL_ACTION_WARP_END,
+ };
+ 
+ #define CODEX_TOOL_FLAG_SHINY (1 << 0)
+@@ -34,6 +35,7 @@ enum {
+     CODEX_TOOL_RESULT_GIVEN_TO_PARTY,
+     CODEX_TOOL_RESULT_GIVEN_TO_PC,
+     CODEX_TOOL_RESULT_NO_ROOM,
++    CODEX_TOOL_RESULT_WARP_END,
+ };
+ 
+ struct CodexMailbox
+@@ -151,7 +153,15 @@ void TryExecuteCodexTool(void)
+ 
+     if (gCodexMailbox.toolAction != CODEX_TOOL_ACTION_GIVE_POKEMON)
+     {
+-        gSpecialVar_Result = CODEX_TOOL_RESULT_NONE;
++        if (gCodexMailbox.toolAction == CODEX_TOOL_ACTION_WARP_END)
++        {
++            gCodexMailbox.toolAction = CODEX_TOOL_ACTION_NONE;
++            gSpecialVar_Result = CODEX_TOOL_RESULT_WARP_END;
++        }
++        else
++        {
++            gSpecialVar_Result = CODEX_TOOL_RESULT_NONE;
++        }
+         return;
+     }
+ 
+diff --git a/tools/codex-npc-bridge/emerald-host-bridge-server.mjs b/tools/codex-npc-bridge/emerald-host-bridge-server.mjs
+index d851cc26d..7bbc29e91 100644
+--- a/tools/codex-npc-bridge/emerald-host-bridge-server.mjs
++++ b/tools/codex-npc-bridge/emerald-host-bridge-server.mjs
+@@ -35,6 +35,15 @@ function jsonLine(value) {
+ 
+ async function getReply(prompt) {
+   log(`routing prompt mode=${mode} chars=${prompt.length}`);
++  const warp = parseWarpCommand(prompt);
++  if (warp) {
++    log(`shortcut/tool matched type=${warp.type}`);
++    return {
++      reply: "CODEX OPENED THE FINAL DOOR.",
++      tool: warp,
++    };
++  }
++
+   const gift = parseGivePokemonCommand(prompt);
+   if (gift) {
+     log(`shortcut/tool matched species=${gift.displayName} id=${gift.species}`);
+@@ -110,6 +119,14 @@ function normalizePokemonName(value) {
+   return String(value).toUpperCase().replace(/[^A-Z0-9]/g, "");
+ }
+ 
++function parseWarpCommand(prompt) {
++  if (normalizePokemonName(prompt) !== "FIN") {
++    return null;
++  }
++
++  return { type: "warp_end" };
++}
++
+ function parseGivePokemonCommand(prompt) {
+   const trimmed = prompt.trim();
+   const shortcut = demoShortcuts.get(trimmed);
+diff --git a/tools/codex-npc-bridge/mgba-emerald-host-bridge.lua b/tools/codex-npc-bridge/mgba-emerald-host-bridge.lua
+index 0a5b93c9a..c10333603 100644
+--- a/tools/codex-npc-bridge/mgba-emerald-host-bridge.lua
++++ b/tools/codex-npc-bridge/mgba-emerald-host-bridge.lua
+@@ -20,6 +20,7 @@ local TOOL_LEVEL_OFFSET = TOOL_SPECIES_OFFSET + 2
+ local TOOL_FLAGS_OFFSET = TOOL_LEVEL_OFFSET + 1
+ local TOOL_ACTION_NONE = 0
+ local TOOL_ACTION_GIVE_POKEMON = 1
++local TOOL_ACTION_WARP_END = 2
+ local TOOL_FLAG_SHINY = 1
+ local RESPONSE_LINE_MAX = 26
+ local RESPONSE_LINES_PER_PAGE = 2
+@@ -215,6 +216,11 @@ local function writeTool(toolJson)
+ 	end
+ 
+ 	local toolType = jsonString(toolJson, "type")
++	if toolType == "warp_end" then
++		emu:write8(MAILBOX_BASE + TOOL_ACTION_OFFSET, TOOL_ACTION_WARP_END)
++		return
++	end
++
+ 	if toolType ~= "give_pokemon" then
+ 		return
+ 	end
+-- 
+2.50.1 (Apple Git-155)
+

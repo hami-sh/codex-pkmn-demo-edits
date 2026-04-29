@@ -1,0 +1,125 @@
+From 5cb28de063f077f73717619900cf3666846f56d8 Mon Sep 17 00:00:00 2001
+From: hamishgrahambultitude <hamishgrahambultitude@gmail.com>
+Date: Wed, 29 Apr 2026 12:43:05 +1000
+Subject: [PATCH 13/20] Restore shiny Codex gift Pokemon
+
+---
+ .../scripts.inc                               |  4 +-
+ src/codex_npc.c                               | 50 ++++++++++++++++++-
+ .../emerald-host-bridge-server.mjs            |  4 +-
+ 3 files changed, 52 insertions(+), 6 deletions(-)
+
+diff --git a/data/maps/LittlerootTown_ProfessorBirchsLab/scripts.inc b/data/maps/LittlerootTown_ProfessorBirchsLab/scripts.inc
+index 9a6a7dd41..17bc2e113 100644
+--- a/data/maps/LittlerootTown_ProfessorBirchsLab/scripts.inc
++++ b/data/maps/LittlerootTown_ProfessorBirchsLab/scripts.inc
+@@ -874,10 +874,10 @@ LittlerootTown_ProfessorBirchsLab_Text_CodexTimeout:
+ 
+ LittlerootTown_ProfessorBirchsLab_Text_CodexToolParty:
+ 	.string "CODEX SENT OVER\p"
+-	.string "LV.100 {STR_VAR_2}!$"
++	.string "SHINY LV.100 {STR_VAR_2}!$"
+ 
+ LittlerootTown_ProfessorBirchsLab_Text_CodexToolPc:
+-	.string "LV.100 {STR_VAR_2}\p"
++	.string "SHINY LV.100 {STR_VAR_2}\p"
+ 	.string "WAS SENT TO THE PC.$"
+ 
+ LittlerootTown_ProfessorBirchsLab_Text_CodexToolNoRoom:
+diff --git a/src/codex_npc.c b/src/codex_npc.c
+index f93dad48c..5a2519a01 100644
+--- a/src/codex_npc.c
++++ b/src/codex_npc.c
+@@ -3,7 +3,9 @@
+ #include "event_data.h"
+ #include "naming_screen.h"
+ #include "overworld.h"
+-#include "script_pokemon_util.h"
++#include "pokedex.h"
++#include "pokemon.h"
++#include "random.h"
+ #include "string_util.h"
+ #include "constants/characters.h"
+ #include "constants/items.h"
+@@ -54,6 +56,50 @@ static EWRAM_DATA u16 sCodexRequestSeq = 0;
+ 
+ EWRAM_DATA struct CodexMailbox gCodexMailbox = {0};
+ 
++static u32 GetPlayerOtId(void)
++{
++    return gSaveBlock2Ptr->playerTrainerId[0]
++        | (gSaveBlock2Ptr->playerTrainerId[1] << 8)
++        | (gSaveBlock2Ptr->playerTrainerId[2] << 16)
++        | (gSaveBlock2Ptr->playerTrainerId[3] << 24);
++}
++
++static u32 CreateShinyPersonalityForPlayer(void)
++{
++    u32 otId = GetPlayerOtId();
++    u16 personalityLo = Random();
++    u16 shinyValue = Random() % SHINY_ODDS;
++    u16 personalityHi = HIHALF(otId) ^ LOHALF(otId) ^ personalityLo ^ shinyValue;
++
++    return (personalityHi << 16) | personalityLo;
++}
++
++static u8 GiveCodexMon(u16 species, u8 level, bool8 shiny)
++{
++    u16 nationalDexNum;
++    u8 heldItem[2];
++    u8 sentToPc;
++    struct Pokemon mon;
++
++    CreateMon(&mon, species, level, USE_RANDOM_IVS, shiny, CreateShinyPersonalityForPlayer(), OT_ID_PLAYER_ID, 0);
++    heldItem[0] = ITEM_NONE;
++    heldItem[1] = ITEM_NONE >> 8;
++    SetMonData(&mon, MON_DATA_HELD_ITEM, heldItem);
++    sentToPc = GiveMonToPlayer(&mon);
++    nationalDexNum = SpeciesToNationalPokedexNum(species);
++
++    switch (sentToPc)
++    {
++    case MON_GIVEN_TO_PARTY:
++    case MON_GIVEN_TO_PC:
++        GetSetPokedexFlag(nationalDexNum, FLAG_SET_SEEN);
++        GetSetPokedexFlag(nationalDexNum, FLAG_SET_CAUGHT);
++        break;
++    }
++
++    return sentToPc;
++}
++
+ void StartCodexPrompt(void)
+ {
+     sCodexPromptBuffer[0] = EOS;
+@@ -120,7 +166,7 @@ void TryExecuteCodexTool(void)
+     if (gCodexMailbox.toolLevel > MAX_LEVEL)
+         gCodexMailbox.toolLevel = MAX_LEVEL;
+ 
+-    result = ScriptGiveMon(species, gCodexMailbox.toolLevel, ITEM_NONE, 0, 0, 0);
++    result = GiveCodexMon(species, gCodexMailbox.toolLevel, gCodexMailbox.toolFlags & CODEX_TOOL_FLAG_SHINY);
+     StringCopy(gStringVar2, gSpeciesNames[species]);
+     gCodexMailbox.toolAction = CODEX_TOOL_ACTION_NONE;
+ 
+diff --git a/tools/codex-npc-bridge/emerald-host-bridge-server.mjs b/tools/codex-npc-bridge/emerald-host-bridge-server.mjs
+index 27eeced46..9aa53f184 100644
+--- a/tools/codex-npc-bridge/emerald-host-bridge-server.mjs
++++ b/tools/codex-npc-bridge/emerald-host-bridge-server.mjs
+@@ -33,12 +33,12 @@ async function getReply(prompt) {
+   const gift = parseGivePokemonCommand(prompt);
+   if (gift) {
+     return {
+-      reply: `TOOL READY: LV.100 ${gift.displayName}.`,
++      reply: `TOOL READY: SHINY LV.100 ${gift.displayName}.`,
+       tool: {
+         type: "give_pokemon",
+         species: gift.species,
+         level: 100,
+-        shiny: false,
++        shiny: true,
+       },
+     };
+   }
+-- 
+2.50.1 (Apple Git-155)
+

@@ -1,0 +1,87 @@
+From 2cecdcbd9fbd29be70c205b6f3c5515ff795c6a5 Mon Sep 17 00:00:00 2001
+From: hamishgrahambultitude <hamishgrahambultitude@gmail.com>
+Date: Wed, 29 Apr 2026 12:15:48 +1000
+Subject: [PATCH 09/20] Add Emerald demo shortcuts
+
+---
+ .../emerald-host-bridge-server.mjs            | 19 ++++++++++++++++++-
+ .../mgba-emerald-host-bridge.lua              | 12 ++++++++++--
+ 2 files changed, 28 insertions(+), 3 deletions(-)
+
+diff --git a/tools/codex-npc-bridge/emerald-host-bridge-server.mjs b/tools/codex-npc-bridge/emerald-host-bridge-server.mjs
+index 3ac70e92c..9aa53f184 100644
+--- a/tools/codex-npc-bridge/emerald-host-bridge-server.mjs
++++ b/tools/codex-npc-bridge/emerald-host-bridge-server.mjs
+@@ -11,6 +11,17 @@ const port = Number(process.env.EMERALD_CODEX_NPC_PORT ?? 8898);
+ const mode = process.env.EMERALD_CODEX_NPC_MODE ?? "fake";
+ const maxReplyChars = Number(process.env.EMERALD_CODEX_REPLY_MAX_CHARS ?? 220);
+ const speciesByName = loadSpeciesMap();
++const demoShortcuts = new Map([
++  ["1", "CHARIZARD"],
++  ["2", "RAYQUAZA"],
++  ["3", "MEWTWO"],
++  ["4", "KYOGRE"],
++  ["5", "GROUDON"],
++  ["6", "MEW"],
++  ["7", "JIRACHI"],
++  ["8", "METAGROSS"],
++  ["9", "SALAMENCE"],
++]);
+ 
+ let codexClient;
+ 
+@@ -88,7 +99,13 @@ function normalizePokemonName(value) {
+ }
+ 
+ function parseGivePokemonCommand(prompt) {
+-  const match = prompt.trim().match(/^GIVE(?:\s+ME)?\s+(.+)$/i);
++  const trimmed = prompt.trim();
++  const shortcut = demoShortcuts.get(trimmed);
++  if (shortcut) {
++    return speciesByName.get(normalizePokemonName(shortcut)) ?? null;
++  }
++
++  const match = trimmed.match(/^GIVE(?:\s+ME)?\s+(.+)$/i);
+   if (!match) {
+     return null;
+   }
+diff --git a/tools/codex-npc-bridge/mgba-emerald-host-bridge.lua b/tools/codex-npc-bridge/mgba-emerald-host-bridge.lua
+index 3a09582db..d2abe4931 100644
+--- a/tools/codex-npc-bridge/mgba-emerald-host-bridge.lua
++++ b/tools/codex-npc-bridge/mgba-emerald-host-bridge.lua
+@@ -31,6 +31,14 @@ local lastSeq = 0
+ local client = nil
+ local recvBuffer = ""
+ 
++local function errorText(err)
++	if type(err) == "table" then
++		return err.message or err.name or "<socket error>"
++	end
++
++	return tostring(err)
++end
++
+ local function readEmeraldString(address, maxLen)
+ 	local chars = {}
+ 
+@@ -249,7 +257,7 @@ local function onReceived()
+ 			end
+ 		else
+ 			if err ~= socket.ERRORS.AGAIN then
+-				console:error("Codex host bridge receive error: " .. err)
++				console:error("Codex host bridge receive error: " .. errorText(err))
+ 				client:close()
+ 				client = nil
+ 			end
+@@ -264,7 +272,7 @@ local function connect()
+ 	client = socket.tcp()
+ 	client:add("received", onReceived)
+ 	client:add("error", function(err)
+-		console:error("Codex host bridge socket error: " .. err)
++		console:error("Codex host bridge socket error: " .. errorText(err))
+ 		client:close()
+ 		client = nil
+ 	end)
+-- 
+2.50.1 (Apple Git-155)
+

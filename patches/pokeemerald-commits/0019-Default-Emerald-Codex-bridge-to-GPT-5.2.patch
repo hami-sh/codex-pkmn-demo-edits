@@ -1,0 +1,25 @@
+From cce0c3a06e385dd4507e8a5d17018e65bfa96254 Mon Sep 17 00:00:00 2001
+From: hamishgrahambultitude <hamishgrahambultitude@gmail.com>
+Date: Wed, 29 Apr 2026 13:09:56 +1000
+Subject: [PATCH 19/20] Default Emerald Codex bridge to GPT 5.2
+
+---
+ tools/codex-npc-bridge/emerald-codex-app-server-client.mjs | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/tools/codex-npc-bridge/emerald-codex-app-server-client.mjs b/tools/codex-npc-bridge/emerald-codex-app-server-client.mjs
+index f51c770db..a71a34e0f 100644
+--- a/tools/codex-npc-bridge/emerald-codex-app-server-client.mjs
++++ b/tools/codex-npc-bridge/emerald-codex-app-server-client.mjs
+@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
+ import readline from "node:readline";
+ 
+ const DEFAULT_TIMEOUT_MS = Number(process.env.EMERALD_CODEX_APP_SERVER_TIMEOUT_MS ?? 180000);
+-const DEFAULT_MODEL = "gpt-5.1";
++const DEFAULT_MODEL = "gpt-5.2";
+ const DEFAULT_REASONING_EFFORT = "low";
+ 
+ class EmeraldCodexAppServerClient {
+-- 
+2.50.1 (Apple Git-155)
+

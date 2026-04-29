@@ -1,0 +1,161 @@
+From 074b4a025db3f3b4135336e819647ccf35f117e0 Mon Sep 17 00:00:00 2001
+From: hamishgrahambultitude <hamishgrahambultitude@gmail.com>
+Date: Wed, 29 Apr 2026 11:09:14 +1000
+Subject: [PATCH 02/20] Add Codex prompt echo flow
+
+---
+ .../scripts.inc                               | 14 +++++++++----
+ data/specials.inc                             |  2 ++
+ include/naming_screen.h                       |  3 +++
+ src/codex_npc.c                               | 21 +++++++++++++++++++
+ src/naming_screen.c                           | 19 +++++++++++++++--
+ 5 files changed, 53 insertions(+), 6 deletions(-)
+ create mode 100644 src/codex_npc.c
+
+diff --git a/data/maps/LittlerootTown_ProfessorBirchsLab/scripts.inc b/data/maps/LittlerootTown_ProfessorBirchsLab/scripts.inc
+index 79edd0916..e04180a86 100644
+--- a/data/maps/LittlerootTown_ProfessorBirchsLab/scripts.inc
++++ b/data/maps/LittlerootTown_ProfessorBirchsLab/scripts.inc
+@@ -289,7 +289,10 @@ LittlerootTown_ProfessorBirchsLab_EventScript_AideReceivedStarter::
+ LittlerootTown_ProfessorBirchsLab_EventScript_CodexNpc::
+ 	lock
+ 	faceplayer
+-	msgbox LittlerootTown_ProfessorBirchsLab_Text_CodexLinkReady, MSGBOX_DEFAULT
++	msgbox LittlerootTown_ProfessorBirchsLab_Text_CodexPrompt, MSGBOX_DEFAULT
++	special StartCodexPrompt
++	special BufferCodexPrompt
++	msgbox LittlerootTown_ProfessorBirchsLab_Text_CodexEcho, MSGBOX_DEFAULT
+ 	release
+ 	end
+ 
+@@ -816,10 +819,13 @@ LittlerootTown_ProfessorBirchsLab_Text_PCUsedForResearch:
+ 	.string "It's a PC used for research.\n"
+ 	.string "Better not mess around with it.$"
+ 
+-LittlerootTown_ProfessorBirchsLab_Text_CodexLinkReady:
++LittlerootTown_ProfessorBirchsLab_Text_CodexPrompt:
+ 	.string "CODEX LINK READY.\p"
+-	.string "COME BACK WHEN THE TERMINAL\n"
+-	.string "IS ONLINE.$"
++	.string "ENTER A MESSAGE FOR CODEX.$"
++
++LittlerootTown_ProfessorBirchsLab_Text_CodexEcho:
++	.string "CODEX HEARD:\p"
++	.string "{STR_VAR_1}$"
+ 
+ LittlerootTown_ProfessorBirchsLab_Text_CrammedWithBooksOnPokemon:
+ 	.string "It's crammed with books on POKéMON.$"
+diff --git a/data/specials.inc b/data/specials.inc
+index ff4fae1f4..06b9864eb 100644
+--- a/data/specials.inc
++++ b/data/specials.inc
+@@ -528,6 +528,8 @@ gSpecials::
+ 	def_special TryBufferWaldaPhrase
+ 	def_special DoWaldaNamingScreen, waitstate=1
+ 	def_special TryGetWallpaperWithWaldaPhrase
++	def_special StartCodexPrompt, waitstate=1
++	def_special BufferCodexPrompt
+ 	def_special PlayerNotAtTrainerHillEntrance
+ 	def_special GetBattlePyramidHint
+ 	def_special LoadLinkContestPlayerPalettes
+diff --git a/include/naming_screen.h b/include/naming_screen.h
+index 93527640e..9ca91cf9d 100644
+--- a/include/naming_screen.h
++++ b/include/naming_screen.h
+@@ -9,8 +9,11 @@ enum {
+     NAMING_SCREEN_CAUGHT_MON,
+     NAMING_SCREEN_NICKNAME,
+     NAMING_SCREEN_WALDA,
++    NAMING_SCREEN_CODEX,
+ };
+ 
++#define CODEX_INPUT_LENGTH 32
++
+ void DoNamingScreen(u8 templateNum, u8 *destBuffer, u16 monSpecies, u16 monGender, u32 monPersonality, MainCallback returnCallback);
+ 
+ #endif // GUARD_NAMING_SCREEN_H
+diff --git a/src/codex_npc.c b/src/codex_npc.c
+new file mode 100644
+index 000000000..b4b219fee
+--- /dev/null
++++ b/src/codex_npc.c
+@@ -0,0 +1,21 @@
++#include "global.h"
++#include "naming_screen.h"
++#include "overworld.h"
++#include "string_util.h"
++#include "constants/characters.h"
++
++static EWRAM_DATA u8 sCodexPromptBuffer[CODEX_INPUT_LENGTH + 1] = {0};
++
++void StartCodexPrompt(void)
++{
++    sCodexPromptBuffer[0] = EOS;
++    DoNamingScreen(NAMING_SCREEN_CODEX, sCodexPromptBuffer, 0, 0, 0, CB2_ReturnToFieldContinueScript);
++}
++
++void BufferCodexPrompt(void)
++{
++    if (sCodexPromptBuffer[0] == EOS)
++        gStringVar1[0] = EOS;
++    else
++        StringCopy(gStringVar1, sCodexPromptBuffer);
++}
+diff --git a/src/naming_screen.c b/src/naming_screen.c
+index ca3be258b..ce2808126 100644
+--- a/src/naming_screen.c
++++ b/src/naming_screen.c
+@@ -156,7 +156,7 @@ struct NamingScreenData
+     u8 tilemapBuffer1[0x800];
+     u8 tilemapBuffer2[0x800];
+     u8 tilemapBuffer3[0x800];
+-    u8 textBuffer[16];
++    u8 textBuffer[CODEX_INPUT_LENGTH + 1];
+     u8 tileBuffer[0x600];
+     u8 state;
+     u8 windows[WIN_COUNT];
+@@ -476,6 +476,8 @@ static void NamingScreen_Init(void)
+     sNamingScreen->inputCharBaseXPos = (DISPLAY_WIDTH - sNamingScreen->template->maxChars * 8) / 2 + 6;
+     if (sNamingScreen->templateNum == NAMING_SCREEN_WALDA)
+         sNamingScreen->inputCharBaseXPos += 11;
++    else if (sNamingScreen->templateNum == NAMING_SCREEN_CODEX)
++        sNamingScreen->inputCharBaseXPos = 0x40;
+     sNamingScreen->keyRepeatStartDelayCopy = gKeyRepeatStartDelay;
+     memset(sNamingScreen->textBuffer, EOS, sizeof(sNamingScreen->textBuffer));
+     if (sNamingScreen->template->copyExistingString)
+@@ -2128,6 +2130,19 @@ static const struct NamingScreenTemplate sWaldaWordsScreenTemplate =
+     .title = gText_TellHimTheWords,
+ };
+ 
++static const u8 sText_AskCodex[] = _("ASK CODEX");
++
++static const struct NamingScreenTemplate sCodexScreenTemplate =
++{
++    .copyExistingString = FALSE,
++    .maxChars = CODEX_INPUT_LENGTH,
++    .iconFunction = 0,
++    .addGenderIcon = FALSE,
++    .initialPage = KBPAGE_LETTERS_UPPER,
++    .unused = 11,
++    .title = sText_AskCodex,
++};
++
+ static const struct NamingScreenTemplate *const sNamingScreenTemplates[] =
+ {
+     [NAMING_SCREEN_PLAYER]     = &sPlayerNamingScreenTemplate,
+@@ -2135,6 +2150,7 @@ static const struct NamingScreenTemplate *const sNamingScreenTemplates[] =
+     [NAMING_SCREEN_CAUGHT_MON] = &sMonNamingScreenTemplate,
+     [NAMING_SCREEN_NICKNAME]   = &sMonNamingScreenTemplate,
+     [NAMING_SCREEN_WALDA]      = &sWaldaWordsScreenTemplate,
++    [NAMING_SCREEN_CODEX]      = &sCodexScreenTemplate,
+ };
+ 
+ static const struct OamData sOam_8x8 =
+@@ -2585,4 +2601,3 @@ static const struct SpritePalette sSpritePalettes[] =
+     {}
+ };
+ 
+-
+-- 
+2.50.1 (Apple Git-155)
+
