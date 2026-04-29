@@ -1,5 +1,7 @@
 # codex-pkmn demo edits
 
+TLDR: Talk to GPT-5.5 through Zelda and Pokemon Emerald.
+
 This project explores what happens when classic games become programmable surfaces for AI-assisted tools and personalization. For the demo, we modified two community decompilation projects: one Ocarina of Time build with a Navi/Codex prompt flow, and one Pokemon Emerald build with custom starter Pokemon assets.
 
 Video game decompilation projects reconstruct old games as buildable C/source-code projects. They do not replace the original game data; instead, they let developers rebuild and modify a game when paired with legally obtained assets/ROMs and the upstream build tooling. That makes them ideal hackathon targets: the game still runs like the original, but specific systems can be changed, extended, and rebuilt.
