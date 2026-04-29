@@ -1,4 +1,4 @@
-# codex-pkmn Demo Edits
+# Codex Retro Hackathon 2026
 
 This demo turns classic games into AI interaction surfaces while they still run on their original engines.
 
